@@ -1,11 +1,4 @@
-// EdgeOne Cloud Functions - 同檐后端 API（内存存储版）
-
-// 内存数据存储
-const store = {
-  pairs: [],
-  users: [],
-  records: []
-};
+// EdgeOne Cloud Functions - 同檐后端 API（KV 存储版）
 
 // 工具函数
 function uuid() {
@@ -36,10 +29,25 @@ async function parseBody(request) {
   }
 }
 
+// KV 存储辅助函数
+async function getStore(env) {
+  try {
+    const data = await env.DATA.get('store');
+    return data ? JSON.parse(data) : { pairs: [], users: [], records: [] };
+  } catch {
+    return { pairs: [], users: [], records: [] };
+  }
+}
+
+async function saveStore(env, store) {
+  await env.DATA.put('store', JSON.stringify(store));
+}
+
 // 主入口
 export default async function onRequest(context) {
   const request = context.request;
   const method = request.method;
+  const env = context.env;
   
   // 获取路径（兼容有/无 /api 前缀）
   let pathname = new URL(request.url).pathname;
@@ -68,6 +76,8 @@ export default async function onRequest(context) {
     const { secret_code, name, role, partner_name } = body;
     if (!secret_code || secret_code.length < 6) return jsonError('暗号至少需要 6 位');
     if (!name) return jsonError('请输入名字');
+
+    const store = await getStore(env);
 
     // 查找或创建配对
     let pair = store.pairs.find(p => p.secret_code === secret_code);
@@ -106,6 +116,8 @@ export default async function onRequest(context) {
     // 查找伴侣
     const partner = store.users.find(u => u.pairId === pair.pairId && u.userId !== user.userId);
 
+    await saveStore(env, store);
+
     return jsonResponse({
       token: 'token_' + uuid(),
       user_id: user.userId,
@@ -120,6 +132,7 @@ export default async function onRequest(context) {
   const partnerMatch = pathname.match(/^\/partner\/([^\/]+)\/([^\/]+)$/);
   if (partnerMatch && method === 'GET') {
     const [, pairId, userId] = partnerMatch;
+    const store = await getStore(env);
     const partner = store.users.find(u => u.pairId === pairId && u.userId !== userId);
     return jsonResponse({
       name: partner ? partner.name : ''
@@ -130,6 +143,7 @@ export default async function onRequest(context) {
   const getMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)$/);
   if (getMatch && method === 'GET') {
     const [, pairId, type] = getMatch;
+    const store = await getStore(env);
     const records = store.records
       .filter(r => r.pairId === pairId && r.type === type)
       .map(r => ({ ...r, pair_id: r.pairId }));
@@ -142,6 +156,8 @@ export default async function onRequest(context) {
     const [, pairId, type] = postMatch;
     const body = await parseBody(request);
     if (!body) return jsonError('无效的请求体');
+
+    const store = await getStore(env);
 
     const normalizedBody = { ...body };
     if (normalizedBody.pair_id && !normalizedBody.pairId) {
@@ -156,6 +172,7 @@ export default async function onRequest(context) {
       createdAt: new Date().toISOString()
     };
     store.records.push(newRecord);
+    await saveStore(env, store);
 
     return jsonResponse({ ...newRecord, pair_id: newRecord.pairId }, 201);
   }
@@ -167,10 +184,12 @@ export default async function onRequest(context) {
     const body = await parseBody(request);
     if (!body) return jsonError('无效的请求体');
 
+    const store = await getStore(env);
     const existing = store.records.find(r => r.id === id && r.pairId === pairId && r.type === type);
     if (!existing) return jsonError('记录不存在', 404);
 
     Object.assign(existing, body, { updatedAt: new Date().toISOString() });
+    await saveStore(env, store);
     return jsonResponse({ ...existing, pair_id: existing.pairId });
   }
 
@@ -178,10 +197,12 @@ export default async function onRequest(context) {
   const deleteMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
   if (deleteMatch && method === 'DELETE') {
     const [, pairId, type, id] = deleteMatch;
+    const store = await getStore(env);
     const index = store.records.findIndex(r => r.id === id && r.pairId === pairId && r.type === type);
     if (index === -1) return jsonError('记录不存在', 404);
 
     store.records.splice(index, 1);
+    await saveStore(env, store);
     return jsonResponse({ success: true });
   }
 
