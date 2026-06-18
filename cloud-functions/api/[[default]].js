@@ -1,17 +1,11 @@
-// EdgeOne Cloud Functions - 同檐后端 API（CloudBase 数据库版）
-const cloudbase = require('@cloudbase/node-sdk');
+// EdgeOne Cloud Functions - 同檐后端 API（内存存储版）
 
-// 【重要】请将 '你的环境ID' 替换为第一步创建的实际环境ID
-const app = cloudbase.init({
-  env: '你的环境ID'  // 例如: 'your-env-id-xxxxx'
-});
-
-const db = app.database();
-
-// 集合引用
-const pairsCollection = db.collection('pairs');
-const usersCollection = db.collection('users');
-const recordsCollection = db.collection('records');
+// 内存数据存储
+const store = {
+  pairs: [],
+  users: [],
+  records: []
+};
 
 // 工具函数
 function uuid() {
@@ -21,7 +15,12 @@ function uuid() {
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    }
   });
 }
 
@@ -37,19 +36,17 @@ async function parseBody(request) {
   }
 }
 
-function parsePath(url) {
-  try {
-    return new URL(url).pathname;
-  } catch {
-    return url;
-  }
-}
-
 // 主入口
 export default async function onRequest(context) {
   const request = context.request;
   const method = request.method;
-  const pathname = parsePath(request.url);
+  
+  // 获取路径（兼容有/无 /api 前缀）
+  let pathname = new URL(request.url).pathname;
+  // 去掉 /api 前缀（如果存在）
+  if (pathname.startsWith('/api/')) {
+    pathname = pathname.substring(4); // 去掉 '/api'
+  }
 
   // CORS 预检
   if (method === 'OPTIONS') {
@@ -63,8 +60,8 @@ export default async function onRequest(context) {
     });
   }
 
-  // POST /api/login - 登录/创建配对（暗号 + 名字方式）
-  if (pathname === '/api/login' && method === 'POST') {
+  // POST /login - 登录/创建配对
+  if (pathname === '/login' && method === 'POST') {
     const body = await parseBody(request);
     if (!body) return jsonError('无效的请求体');
 
@@ -73,60 +70,41 @@ export default async function onRequest(context) {
     if (!name) return jsonError('请输入名字');
 
     // 查找或创建配对
-    let pairResult = await pairsCollection.where({ secret_code }).get();
-    let pair;
+    let pair = store.pairs.find(p => p.secret_code === secret_code);
 
-    if (pairResult.data && pairResult.data.length > 0) {
-      pair = pairResult.data[0];
-    } else {
-      const newPair = {
+    if (!pair) {
+      pair = {
         pairId: 'pair_' + uuid(),
         secret_code,
         partner_name: partner_name || '',
         createdAt: new Date().toISOString()
       };
-      await pairsCollection.add(newPair);
-      pair = newPair;
+      store.pairs.push(pair);
     }
 
-    // 更新 partner_name（如果提供了）
+    // 更新 partner_name
     if (partner_name && pair.partner_name !== partner_name) {
-      await pairsCollection.where({ pairId: pair.pairId }).update({ partner_name });
       pair.partner_name = partner_name;
     }
 
     // 查找或创建用户
-    let userResult = await usersCollection.where({
-      pairId: pair.pairId,
-      name
-    }).get();
-    let user;
+    let user = store.users.find(u => u.pairId === pair.pairId && u.name === name);
 
-    if (userResult.data && userResult.data.length > 0) {
-      user = userResult.data[0];
-      // 更新角色
-      if (user.role !== role) {
-        await usersCollection.doc(user._id).update({ role });
-        user.role = role;
-      }
-    } else {
-      const newUser = {
+    if (!user) {
+      user = {
         userId: 'user_' + uuid(),
         pairId: pair.pairId,
         name,
         role,
         createdAt: new Date().toISOString()
       };
-      await usersCollection.add(newUser);
-      user = newUser;
+      store.users.push(user);
+    } else if (user.role !== role) {
+      user.role = role;
     }
 
-    // 查找伴侣（获取同一 pairId 下的其他用户）
-    let partner = null;
-    const allUsersInPair = await usersCollection.where({ pairId: pair.pairId }).get();
-    if (allUsersInPair.data && allUsersInPair.data.length > 0) {
-      partner = allUsersInPair.data.find(u => u.userId !== user.userId);
-    }
+    // 查找伴侣
+    const partner = store.users.find(u => u.pairId === pair.pairId && u.userId !== user.userId);
 
     return jsonResponse({
       token: 'token_' + uuid(),
@@ -138,41 +116,33 @@ export default async function onRequest(context) {
     });
   }
 
-  // GET /api/partner/:pairId/:userId - 获取伴侣名字
-  const partnerMatch = pathname.match(/^\/api\/partner\/([^\/]+)\/([^\/]+)$/);
+  // GET /partner/:pairId/:userId - 获取伴侣名字
+  const partnerMatch = pathname.match(/^\/partner\/([^\/]+)\/([^\/]+)$/);
   if (partnerMatch && method === 'GET') {
     const [, pairId, userId] = partnerMatch;
-
-    // 查找该配对下的另一个用户
-    const partnerResult = await usersCollection.where({
-      pairId,
-      userId: db.command.neq(userId)
-    }).get();
-
-    const partner = partnerResult.data?.[0];
+    const partner = store.users.find(u => u.pairId === pairId && u.userId !== userId);
     return jsonResponse({
       name: partner ? partner.name : ''
     });
   }
 
-  // GET /api/data/:pairId/:type - 查询数据
-  const getMatch = pathname.match(/^\/api\/data\/([^\/]+)\/([^\/]+)$/);
+  // GET /data/:pairId/:type - 查询数据
+  const getMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)$/);
   if (getMatch && method === 'GET') {
     const [, pairId, type] = getMatch;
-    const result = await recordsCollection.where({ pairId, type }).get();
-    // 兼容前端 pair_id 字段
-    const records = (result.data || []).map(r => ({ ...r, pair_id: r.pairId }));
+    const records = store.records
+      .filter(r => r.pairId === pairId && r.type === type)
+      .map(r => ({ ...r, pair_id: r.pairId }));
     return jsonResponse(records);
   }
 
-  // POST /api/data/:pairId/:type - 创建数据
-  const postMatch = pathname.match(/^\/api\/data\/([^\/]+)\/([^\/]+)$/);
+  // POST /data/:pairId/:type - 创建数据
+  const postMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)$/);
   if (postMatch && method === 'POST') {
     const [, pairId, type] = postMatch;
     const body = await parseBody(request);
     if (!body) return jsonError('无效的请求体');
 
-    // 兼容前端 pair_id 字段，统一转为 pairId 存储
     const normalizedBody = { ...body };
     if (normalizedBody.pair_id && !normalizedBody.pairId) {
       normalizedBody.pairId = normalizedBody.pair_id;
@@ -185,40 +155,33 @@ export default async function onRequest(context) {
       ...normalizedBody,
       createdAt: new Date().toISOString()
     };
-    await recordsCollection.add(newRecord);
+    store.records.push(newRecord);
 
-    // 返回时兼容前端 pair_id 字段
-    const respRecord = { ...newRecord, pair_id: newRecord.pairId };
-    return jsonResponse(respRecord, 201);
+    return jsonResponse({ ...newRecord, pair_id: newRecord.pairId }, 201);
   }
 
-  // PUT /api/data/:pairId/:type/:id - 更新数据
-  const putMatch = pathname.match(/^\/api\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
+  // PUT /data/:pairId/:type/:id - 更新数据
+  const putMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
   if (putMatch && method === 'PUT') {
     const [, pairId, type, id] = putMatch;
     const body = await parseBody(request);
     if (!body) return jsonError('无效的请求体');
 
-    const result = await recordsCollection.where({ id, pairId, type }).get();
-    const existing = result.data?.[0];
+    const existing = store.records.find(r => r.id === id && r.pairId === pairId && r.type === type);
     if (!existing) return jsonError('记录不存在', 404);
 
-    const updated = { ...existing, ...body, updatedAt: new Date().toISOString() };
-    await recordsCollection.doc(existing._id).update(updated);
-    // 兼容前端 pair_id 字段
-    return jsonResponse({ ...updated, pair_id: updated.pairId });
+    Object.assign(existing, body, { updatedAt: new Date().toISOString() });
+    return jsonResponse({ ...existing, pair_id: existing.pairId });
   }
 
-  // DELETE /api/data/:pairId/:type/:id - 删除数据
-  const deleteMatch = pathname.match(/^\/api\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
+  // DELETE /data/:pairId/:type/:id - 删除数据
+  const deleteMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
   if (deleteMatch && method === 'DELETE') {
     const [, pairId, type, id] = deleteMatch;
+    const index = store.records.findIndex(r => r.id === id && r.pairId === pairId && r.type === type);
+    if (index === -1) return jsonError('记录不存在', 404);
 
-    const result = await recordsCollection.where({ id, pairId, type }).get();
-    const existing = result.data?.[0];
-    if (!existing) return jsonError('记录不存在', 404);
-
-    await recordsCollection.doc(existing._id).remove();
+    store.records.splice(index, 1);
     return jsonResponse({ success: true });
   }
 
