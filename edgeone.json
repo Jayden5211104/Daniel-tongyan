@@ -1,8 +1,5 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist/build/h5",
-  "installCommand": "npm install",
-  "cloudFunctions": {
-    "root": "cloud-functions"
-  }
+  "installCommand": "npm install"
 }
