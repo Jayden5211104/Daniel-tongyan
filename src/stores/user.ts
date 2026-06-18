@@ -128,6 +128,9 @@ export const useUserStore = defineStore('user', () => {
     pairId.value = uni.getStorageSync(PAIR_ID_KEY) || ''
   }
 
+const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+const API_BASE = isDev ? 'http://localhost:3000/api' : '/api'
+
 async function login(secretCode: string, name: string, role: 'user' | 'partner'): Promise<LoginResult> {
     if (!secretCode || secretCode.length < 6) {
       throw new Error('暗号至少需要6位')
@@ -138,7 +141,7 @@ async function login(secretCode: string, name: string, role: 'user' | 'partner')
 
     try {
       const response = await uni.request({
-        url: 'http://localhost:3000/api/login',
+        url: `${API_BASE}/login`,
         method: 'POST',
         data: {
           secret_code: secretCode,
@@ -160,7 +163,7 @@ async function login(secretCode: string, name: string, role: 'user' | 'partner')
         // Fetch partner name from backend
         try {
           const partnerResp = await uni.request({
-            url: `http://localhost:3000/api/partner/${result.pair_id}/${result.user_id}`,
+            url: `${API_BASE}/partner/${result.pair_id}/${result.user_id}`,
             method: 'GET'
           })
           const backendPartnerName = (partnerResp.data as any)?.name || ''

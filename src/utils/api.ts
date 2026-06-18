@@ -1,6 +1,8 @@
 import { useUserStore } from './stores/user'
 
-const BASE_URL = 'http://localhost:3000/api'
+// 自动检测环境：本地开发用 localhost，部署后用当前域名
+const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+const BASE_URL = isDev ? 'http://localhost:3000/api' : '/api'
 
 export async function apiGet(pairId: string, type: string) {
   try {

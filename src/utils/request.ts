@@ -1,6 +1,7 @@
 import axios from 'axios'
 
-const BASE_URL = 'http://localhost:3000/api'
+const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+const BASE_URL = isDev ? 'http://localhost:3000/api' : '/api'
 
 const request = axios.create({
   baseURL: BASE_URL,
