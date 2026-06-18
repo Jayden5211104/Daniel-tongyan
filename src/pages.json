@@ -1,0 +1,52 @@
+{
+  "pages": [
+    {
+      "path": "pages/login/index",
+      "style": {
+        "navigationBarTitleText": "同檐",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "同檐",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/bill/index",
+      "style": {
+        "navigationBarTitleText": "账单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/emotion/index",
+      "style": {
+        "navigationBarTitleText": "情感",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/life/index",
+      "style": {
+        "navigationBarTitleText": "生活",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/ai/index",
+      "style": {
+        "navigationBarTitleText": "智能管家",
+        "navigationStyle": "custom"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "同檐",
+    "navigationBarBackgroundColor": "#ffffff",
+    "backgroundColor": "#f5f5f5"
+  }
+}
