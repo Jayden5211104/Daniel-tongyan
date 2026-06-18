@@ -1,7 +1,44 @@
-// EdgeOne Edge Functions - 同檐后端 API
+// EdgeOne Edge Functions - 同檐后端 API（KV 持久化存储）
+// KV 变量名 "DATA" 在 EdgeOne 控制台绑定命名空间后自动注入
 
-// 内存存储
-let memoryStore = { pairs: [], users: [], records: [] };
+// 内存降级存储（KV 不可用时使用）
+let memoryStore = null;
+
+function getMemoryStore() {
+  if (!memoryStore) {
+    memoryStore = { pairs: [], users: [], records: [] };
+  }
+  return memoryStore;
+}
+
+// 从 KV 或内存读取数据
+async function getStore() {
+  // 优先使用 KV 存储（DATA 是 EdgeOne 控制台绑定的变量名）
+  if (typeof DATA !== 'undefined' && DATA) {
+    try {
+      const raw = await DATA.get('store', { type: 'json' });
+      if (raw) return raw;
+    } catch (e) {
+      console.error('KV read error:', e);
+    }
+  }
+  // 降级到内存
+  return getMemoryStore();
+}
+
+// 保存数据到 KV 或内存
+async function saveStore(store) {
+  if (typeof DATA !== 'undefined' && DATA) {
+    try {
+      await DATA.put('store', JSON.stringify(store));
+      return;
+    } catch (e) {
+      console.error('KV write error:', e);
+    }
+  }
+  // 降级到内存
+  memoryStore = store;
+}
 
 function uuid() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
@@ -10,7 +47,7 @@ function uuid() {
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 
+    headers: {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
@@ -34,12 +71,13 @@ async function parseBody(request) {
 export default async function onRequest(context) {
   const request = context.request;
   const method = request.method;
-  
+
   let pathname = new URL(request.url).pathname;
   if (pathname.startsWith('/api/')) {
     pathname = pathname.substring(4);
   }
 
+  // CORS 预检
   if (method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
@@ -51,7 +89,7 @@ export default async function onRequest(context) {
     });
   }
 
-  // POST /login
+  // POST /login - 登录/创建配对
   if (pathname === '/login' && method === 'POST') {
     const body = await parseBody(request);
     if (!body) return jsonError('无效的请求体');
@@ -60,22 +98,25 @@ export default async function onRequest(context) {
     if (!secret_code || secret_code.length < 6) return jsonError('暗号至少需要 6 位');
     if (!name) return jsonError('请输入名字');
 
-    let pair = memoryStore.pairs.find(p => p.secret_code === secret_code);
+    const store = await getStore();
+
+    let pair = store.pairs.find(p => p.secret_code === secret_code);
     if (!pair) {
       pair = { pairId: 'pair_' + uuid(), secret_code, partner_name: partner_name || '', createdAt: new Date().toISOString() };
-      memoryStore.pairs.push(pair);
+      store.pairs.push(pair);
     }
     if (partner_name && pair.partner_name !== partner_name) pair.partner_name = partner_name;
 
-    let user = memoryStore.users.find(u => u.pairId === pair.pairId && u.name === name);
+    let user = store.users.find(u => u.pairId === pair.pairId && u.name === name);
     if (!user) {
       user = { userId: 'user_' + uuid(), pairId: pair.pairId, name, role, createdAt: new Date().toISOString() };
-      memoryStore.users.push(user);
+      store.users.push(user);
     } else if (user.role !== role) {
       user.role = role;
     }
 
-    const partner = memoryStore.users.find(u => u.pairId === pair.pairId && u.userId !== user.userId);
+    const partner = store.users.find(u => u.pairId === pair.pairId && u.userId !== user.userId);
+    await saveStore(store);
 
     return jsonResponse({
       token: 'token_' + uuid(),
@@ -91,7 +132,8 @@ export default async function onRequest(context) {
   const partnerMatch = pathname.match(/^\/partner\/([^\/]+)\/([^\/]+)$/);
   if (partnerMatch && method === 'GET') {
     const [, pairId, userId] = partnerMatch;
-    const partner = memoryStore.users.find(u => u.pairId === pairId && u.userId !== userId);
+    const store = await getStore();
+    const partner = store.users.find(u => u.pairId === pairId && u.userId !== userId);
     return jsonResponse({ name: partner ? partner.name : '' });
   }
 
@@ -99,7 +141,8 @@ export default async function onRequest(context) {
   const getMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)$/);
   if (getMatch && method === 'GET') {
     const [, pairId, type] = getMatch;
-    const records = memoryStore.records.filter(r => r.pairId === pairId && r.type === type).map(r => ({ ...r, pair_id: r.pairId }));
+    const store = await getStore();
+    const records = store.records.filter(r => r.pairId === pairId && r.type === type).map(r => ({ ...r, pair_id: r.pairId }));
     return jsonResponse(records);
   }
 
@@ -109,10 +152,12 @@ export default async function onRequest(context) {
     const [, pairId, type] = postMatch;
     const body = await parseBody(request);
     if (!body) return jsonError('无效的请求体');
+    const store = await getStore();
     const normalizedBody = { ...body };
     if (normalizedBody.pair_id && !normalizedBody.pairId) normalizedBody.pairId = normalizedBody.pair_id;
     const newRecord = { id: 'item_' + uuid(), pairId, type, ...normalizedBody, createdAt: new Date().toISOString() };
-    memoryStore.records.push(newRecord);
+    store.records.push(newRecord);
+    await saveStore(store);
     return jsonResponse({ ...newRecord, pair_id: newRecord.pairId }, 201);
   }
 
@@ -122,9 +167,11 @@ export default async function onRequest(context) {
     const [, pairId, type, id] = putMatch;
     const body = await parseBody(request);
     if (!body) return jsonError('无效的请求体');
-    const existing = memoryStore.records.find(r => r.id === id && r.pairId === pairId && r.type === type);
+    const store = await getStore();
+    const existing = store.records.find(r => r.id === id && r.pairId === pairId && r.type === type);
     if (!existing) return jsonError('记录不存在', 404);
     Object.assign(existing, body, { updatedAt: new Date().toISOString() });
+    await saveStore(store);
     return jsonResponse({ ...existing, pair_id: existing.pairId });
   }
 
@@ -132,9 +179,11 @@ export default async function onRequest(context) {
   const deleteMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
   if (deleteMatch && method === 'DELETE') {
     const [, pairId, type, id] = deleteMatch;
-    const index = memoryStore.records.findIndex(r => r.id === id && r.pairId === pairId && r.type === type);
+    const store = await getStore();
+    const index = store.records.findIndex(r => r.id === id && r.pairId === pairId && r.type === type);
     if (index === -1) return jsonError('记录不存在', 404);
-    memoryStore.records.splice(index, 1);
+    store.records.splice(index, 1);
+    await saveStore(store);
     return jsonResponse({ success: true });
   }
 
