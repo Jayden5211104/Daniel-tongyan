@@ -1,4 +1,7 @@
-// EdgeOne Cloud Functions - 同檐后端 API（KV 存储版）
+// EdgeOne Cloud Functions - 同檐后端 API（兼容 KV + 内存降级）
+
+// 内存存储（KV 不可用时的降级方案）
+let memoryStore = { pairs: [], users: [], records: [] };
 
 // 工具函数
 function uuid() {
@@ -29,31 +32,45 @@ async function parseBody(request) {
   }
 }
 
-// KV 存储辅助函数
+// 数据存储：优先用 KV，不可用时降级到内存
 async function getStore(env) {
-  try {
-    const data = await env.DATA.get('store');
-    return data ? JSON.parse(data) : { pairs: [], users: [], records: [] };
-  } catch {
-    return { pairs: [], users: [], records: [] };
+  // 尝试 KV 存储
+  if (env && env.DATA) {
+    try {
+      const data = await env.DATA.get('store');
+      if (data) return JSON.parse(data);
+    } catch (e) {
+      console.error('KV read error:', e);
+    }
   }
+  // 降级到内存
+  return memoryStore;
 }
 
 async function saveStore(env, store) {
-  await env.DATA.put('store', JSON.stringify(store));
+  // 尝试 KV 存储
+  if (env && env.DATA) {
+    try {
+      await env.DATA.put('store', JSON.stringify(store));
+      return;
+    } catch (e) {
+      console.error('KV write error:', e);
+    }
+  }
+  // 降级到内存
+  memoryStore = store;
 }
 
 // 主入口
 export default async function onRequest(context) {
   const request = context.request;
   const method = request.method;
-  const env = context.env;
+  const env = context.env || {};
   
   // 获取路径（兼容有/无 /api 前缀）
   let pathname = new URL(request.url).pathname;
-  // 去掉 /api 前缀（如果存在）
   if (pathname.startsWith('/api/')) {
-    pathname = pathname.substring(4); // 去掉 '/api'
+    pathname = pathname.substring(4);
   }
 
   // CORS 预检
@@ -79,9 +96,7 @@ export default async function onRequest(context) {
 
     const store = await getStore(env);
 
-    // 查找或创建配对
     let pair = store.pairs.find(p => p.secret_code === secret_code);
-
     if (!pair) {
       pair = {
         pairId: 'pair_' + uuid(),
@@ -91,15 +106,11 @@ export default async function onRequest(context) {
       };
       store.pairs.push(pair);
     }
-
-    // 更新 partner_name
     if (partner_name && pair.partner_name !== partner_name) {
       pair.partner_name = partner_name;
     }
 
-    // 查找或创建用户
     let user = store.users.find(u => u.pairId === pair.pairId && u.name === name);
-
     if (!user) {
       user = {
         userId: 'user_' + uuid(),
@@ -113,9 +124,7 @@ export default async function onRequest(context) {
       user.role = role;
     }
 
-    // 查找伴侣
     const partner = store.users.find(u => u.pairId === pair.pairId && u.userId !== user.userId);
-
     await saveStore(env, store);
 
     return jsonResponse({
@@ -128,18 +137,16 @@ export default async function onRequest(context) {
     });
   }
 
-  // GET /partner/:pairId/:userId - 获取伴侣名字
+  // GET /partner/:pairId/:userId
   const partnerMatch = pathname.match(/^\/partner\/([^\/]+)\/([^\/]+)$/);
   if (partnerMatch && method === 'GET') {
     const [, pairId, userId] = partnerMatch;
     const store = await getStore(env);
     const partner = store.users.find(u => u.pairId === pairId && u.userId !== userId);
-    return jsonResponse({
-      name: partner ? partner.name : ''
-    });
+    return jsonResponse({ name: partner ? partner.name : '' });
   }
 
-  // GET /data/:pairId/:type - 查询数据
+  // GET /data/:pairId/:type
   const getMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)$/);
   if (getMatch && method === 'GET') {
     const [, pairId, type] = getMatch;
@@ -150,7 +157,7 @@ export default async function onRequest(context) {
     return jsonResponse(records);
   }
 
-  // POST /data/:pairId/:type - 创建数据
+  // POST /data/:pairId/:type
   const postMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)$/);
   if (postMatch && method === 'POST') {
     const [, pairId, type] = postMatch;
@@ -158,12 +165,10 @@ export default async function onRequest(context) {
     if (!body) return jsonError('无效的请求体');
 
     const store = await getStore(env);
-
     const normalizedBody = { ...body };
     if (normalizedBody.pair_id && !normalizedBody.pairId) {
       normalizedBody.pairId = normalizedBody.pair_id;
     }
-
     const newRecord = {
       id: 'item_' + uuid(),
       pairId,
@@ -173,11 +178,10 @@ export default async function onRequest(context) {
     };
     store.records.push(newRecord);
     await saveStore(env, store);
-
     return jsonResponse({ ...newRecord, pair_id: newRecord.pairId }, 201);
   }
 
-  // PUT /data/:pairId/:type/:id - 更新数据
+  // PUT /data/:pairId/:type/:id
   const putMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
   if (putMatch && method === 'PUT') {
     const [, pairId, type, id] = putMatch;
@@ -187,25 +191,22 @@ export default async function onRequest(context) {
     const store = await getStore(env);
     const existing = store.records.find(r => r.id === id && r.pairId === pairId && r.type === type);
     if (!existing) return jsonError('记录不存在', 404);
-
     Object.assign(existing, body, { updatedAt: new Date().toISOString() });
     await saveStore(env, store);
     return jsonResponse({ ...existing, pair_id: existing.pairId });
   }
 
-  // DELETE /data/:pairId/:type/:id - 删除数据
+  // DELETE /data/:pairId/:type/:id
   const deleteMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
   if (deleteMatch && method === 'DELETE') {
     const [, pairId, type, id] = deleteMatch;
     const store = await getStore(env);
     const index = store.records.findIndex(r => r.id === id && r.pairId === pairId && r.type === type);
     if (index === -1) return jsonError('记录不存在', 404);
-
     store.records.splice(index, 1);
     await saveStore(env, store);
     return jsonResponse({ success: true });
   }
 
-  // 未匹配到任何路由
   return jsonError('Not Found', 404);
 }

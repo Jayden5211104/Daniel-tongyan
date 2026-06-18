@@ -4,11 +4,5 @@
   "installCommand": "npm install",
   "cloudFunctions": {
     "root": "cloud-functions"
-  },
-  "kvNamespaces": [
-    {
-      "binding": "DATA",
-      "id": "tongyan-data"
-    }
-  ]
+  }
 }
