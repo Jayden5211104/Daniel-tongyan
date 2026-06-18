@@ -1,59 +1,90 @@
-import { useUserStore } from './stores/user'
+import cloudbase from '@cloudbase/js-sdk'
 
-// 自动检测环境：本地开发用 localhost，部署后用当前域名
-const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
-const BASE_URL = isDev ? 'http://localhost:3000/api' : '/api'
+// CloudBase 环境 ID
+const ENV_ID = 'jayden5211104-d2gji5i911b4bb7de2e'
 
-// 数据存储键名
-function dataKey(pairId: string, type: string) {
-  return `tongyan_data_${pairId}_${type}`
+// 初始化 CloudBase（匿名登录）
+const app = cloudbase.init({ env: ENV_ID })
+const auth = app.auth({ persistence: 'local' })
+const db = app.database()
+
+// 匿名登录
+async function ensureLogin() {
+  const loginState = await auth.getLoginState()
+  if (!loginState) {
+    await auth.anonymousAuthProvider().signIn()
+  }
 }
 
-// 从 localStorage 读取数据
-function loadFromStorage(pairId: string, type: string): any[] {
+// 获取数据库引用
+function getCollection(name: string) {
+  return db.collection(name)
+}
+
+// 查询数据
+export async function apiGet(pairId: string, type: string) {
   try {
-    const raw = uni.getStorageSync(dataKey(pairId, type))
-    return raw ? JSON.parse(raw) : []
-  } catch {
+    await ensureLogin()
+    const result = await getCollection(type).where({ pairId }).get()
+    return result.data || []
+  } catch (e) {
+    console.error('[API GET ERROR]', e)
     return []
   }
 }
 
-// 保存到 localStorage
-function saveToStorage(pairId: string, type: string, data: any[]) {
-  uni.setStorageSync(dataKey(pairId, type), JSON.stringify(data))
-}
-
-export async function apiGet(pairId: string, type: string) {
-  return loadFromStorage(pairId, type)
-}
-
+// 创建数据
 export async function apiPost(pairId: string, type: string, data: any) {
-  const records = loadFromStorage(pairId, type)
-  const newRecord = {
-    id: 'item_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-    pairId,
-    type,
-    ...data,
-    createdAt: new Date().toISOString()
+  try {
+    await ensureLogin()
+    const newRecord = {
+      id: 'item_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+      pairId,
+      type,
+      ...data,
+      createdAt: new Date().toISOString()
+    }
+    await getCollection(type).add(newRecord)
+    return newRecord
+  } catch (e) {
+    console.error('[API POST ERROR]', e)
+    return null
   }
-  records.push(newRecord)
-  saveToStorage(pairId, type, records)
-  return newRecord
 }
 
+// 更新数据
 export async function apiPut(pairId: string, type: string, id: string, data: any) {
-  const records = loadFromStorage(pairId, type)
-  const index = records.findIndex((r: any) => r.id === id)
-  if (index === -1) return null
-  Object.assign(records[index], data, { updatedAt: new Date().toISOString() })
-  saveToStorage(pairId, type, records)
-  return records[index]
+  try {
+    await ensureLogin()
+    const result = await getCollection(type).where({ id, pairId }).get()
+    if (result.data && result.data.length > 0) {
+      const docId = result.data[0]._id
+      await getCollection(type).doc(docId).update({
+        ...data,
+        updatedAt: new Date().toISOString()
+      })
+      return { ...result.data[0], ...data }
+    }
+    return null
+  } catch (e) {
+    console.error('[API PUT ERROR]', e)
+    return null
+  }
 }
 
+// 删除数据
 export async function apiDelete(pairId: string, type: string, id: string) {
-  const records = loadFromStorage(pairId, type)
-  const filtered = records.filter((r: any) => r.id !== id)
-  saveToStorage(pairId, type, filtered)
-  return { success: true }
+  try {
+    await ensureLogin()
+    const result = await getCollection(type).where({ id, pairId }).get()
+    if (result.data && result.data.length > 0) {
+      const docId = result.data[0]._id
+      await getCollection(type).doc(docId).remove()
+      return { success: true }
+    }
+    return { success: false }
+  } catch (e) {
+    console.error('[API DELETE ERROR]', e)
+    return { success: false }
+  }
 }

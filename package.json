@@ -10,6 +10,7 @@
     "build:mp-weixin": "uni build -p mp-weixin"
   },
   "dependencies": {
+    "@cloudbase/js-sdk": "^3.4.8",
     "@cloudbase/node-sdk": "^3.18.3",
     "@dcloudio/uni-app": "3.0.0-4020420240722001",
     "@dcloudio/uni-components": "3.0.0-4020420240722001",
