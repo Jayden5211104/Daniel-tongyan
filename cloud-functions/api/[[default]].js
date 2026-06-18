@@ -63,13 +63,13 @@ export default async function onRequest(context) {
     });
   }
 
-  // POST /api/login - 登录/创建配对（暗号+名字方式）
+  // POST /api/login - 登录/创建配对（暗号 + 名字方式）
   if (pathname === '/api/login' && method === 'POST') {
     const body = await parseBody(request);
     if (!body) return jsonError('无效的请求体');
 
     const { secret_code, name, role, partner_name } = body;
-    if (!secret_code || secret_code.length < 6) return jsonError('暗号至少需要6位');
+    if (!secret_code || secret_code.length < 6) return jsonError('暗号至少需要 6 位');
     if (!name) return jsonError('请输入名字');
 
     // 查找或创建配对
