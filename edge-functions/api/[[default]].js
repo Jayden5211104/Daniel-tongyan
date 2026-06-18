@@ -13,14 +13,13 @@ function getMemoryStore() {
 
 // 从 KV 或内存读取数据
 async function getStore() {
-  // 优先使用 KV 存储（DATA 是 EdgeOne 控制台绑定的变量名）
-  if (typeof DATA !== 'undefined' && DATA) {
-    try {
-      const raw = await DATA.get('store', { type: 'json' });
-      if (raw) return raw;
-    } catch (e) {
-      console.error('KV read error:', e);
+  try {
+    const raw = await DATA.get('store');
+    if (raw) {
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
     }
+  } catch (e) {
+    console.error('KV read error:', e);
   }
   // 降级到内存
   return getMemoryStore();
@@ -28,13 +27,11 @@ async function getStore() {
 
 // 保存数据到 KV 或内存
 async function saveStore(store) {
-  if (typeof DATA !== 'undefined' && DATA) {
-    try {
-      await DATA.put('store', JSON.stringify(store));
-      return;
-    } catch (e) {
-      console.error('KV write error:', e);
-    }
+  try {
+    await DATA.put('store', JSON.stringify(store));
+    return;
+  } catch (e) {
+    console.error('KV write error:', e);
   }
   // 降级到内存
   memoryStore = store;
