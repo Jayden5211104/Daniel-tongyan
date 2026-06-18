@@ -21,6 +21,7 @@ interface LoginResult {
   pair_id: string
   user: User
   pair: Pair
+  partner_name?: string
 }
 
 const PAIRS_KEY = 'pairs_table'
@@ -131,7 +132,7 @@ export const useUserStore = defineStore('user', () => {
 const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
 const API_BASE = isDev ? 'http://localhost:3000/api' : '/api'
 
-async function login(secretCode: string, name: string, role: 'user' | 'partner'): Promise<LoginResult> {
+async function login(secretCode: string, name: string, role: 'user' | 'partner', partnerName?: string): Promise<LoginResult> {
     if (!secretCode || secretCode.length < 6) {
       throw new Error('暗号至少需要6位')
     }
@@ -146,7 +147,8 @@ async function login(secretCode: string, name: string, role: 'user' | 'partner')
         data: {
           secret_code: secretCode,
           name: name,
-          role: role
+          role: role,
+          partner_name: partnerName || ''
         },
         header: {
           'Content-Type': 'application/json'
@@ -160,28 +162,12 @@ async function login(secretCode: string, name: string, role: 'user' | 'partner')
         setCipher(secretCode)
         currentRole.value = role
 
-        // Fetch partner name from backend
-        try {
-          const partnerResp = await uni.request({
-            url: `${API_BASE}/partner/${result.pair_id}/${result.user_id}`,
-            method: 'GET'
-          })
-          const backendPartnerName = (partnerResp.data as any)?.name || ''
-          if (role === 'user') {
-            // Keep existing partnerName if backend returns empty (first login scenario)
-            const pName = backendPartnerName || partnerName.value
-            setUserNames(name, pName)
-          } else {
-            const pName = backendPartnerName || userName.value
-            setUserNames(pName, name)
-          }
-        } catch {
-          // On error, keep existing names
-          if (role === 'user') {
-            setUserNames(name, partnerName.value)
-          } else {
-            setUserNames(userName.value, name)
-          }
+        // 直接使用后端返回的伴侣名字
+        const backendPartnerName = result.partner_name || ''
+        if (role === 'user') {
+          setUserNames(name, backendPartnerName || partnerName.value)
+        } else {
+          setUserNames(backendPartnerName || userName.value, name)
         }
 
         console.log('[LOGIN SUCCESS] ======================================')

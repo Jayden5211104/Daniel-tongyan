@@ -196,9 +196,9 @@ onMounted(() => {
   isFirstLogin.value = userStore.isFirstLogin
 })
 
-async function doLogin(secretCode: string, name: string, loginRole: 'user' | 'partner', successTitle: string) {
+async function doLogin(secretCode: string, name: string, loginRole: 'user' | 'partner', successTitle: string, pName?: string) {
   try {
-    const result = await userStore.login(secretCode, name, loginRole)
+    const result = await userStore.login(secretCode, name, loginRole, pName)
 
     // Names are already set inside userStore.login(), no need to set again
     userStore.setCurrentRole(loginRole)
@@ -239,7 +239,7 @@ function handleFirstLogin() {
 
   // Set partner name before login so store has it
   userStore.setUserNames(userName.value, partnerName.value)
-  doLogin(cipher.value, userName.value, 'user', '设置成功')
+  doLogin(cipher.value, userName.value, 'user', '设置成功', partnerName.value)
 }
 
 function handleJoin() {
@@ -258,7 +258,10 @@ function handleJoin() {
   } else {
     userStore.setUserNames(joinPartnerName.value || userStore.userName || '', joinUserName.value)
   }
-  doLogin(joinCipher.value, joinUserName.value, joinRole.value, '加入成功')
+  const pName = joinRole.value === 'user'
+    ? (joinPartnerName.value || userStore.partnerName || '')
+    : (joinPartnerName.value || userStore.userName || '')
+  doLogin(joinCipher.value, joinUserName.value, joinRole.value, '加入成功', pName)
 }
 
 function handleLogin() {
@@ -271,7 +274,9 @@ function handleLogin() {
     ? (userStore.userName || '我')
     : (userStore.partnerName || '伴侣')
 
-  doLogin(cipher.value, loginName, role.value, `欢迎回来，${loginName}`)
+  // 传递伴侣名字（如果当前用户是"我"，伴侣就是 partnerName；如果当前用户是"伴侣"，伴侣就是 userName）
+  const pName = role.value === 'user' ? userStore.partnerName : userStore.userName
+  doLogin(cipher.value, loginName, role.value, `欢迎回来，${loginName}`, pName)
 }
 
 function handleReset() {

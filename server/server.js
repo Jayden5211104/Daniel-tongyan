@@ -38,7 +38,7 @@ let { pairs, users, records } = loadFromFile();
 console.log(`[DATA INIT] Loaded ${pairs.length} pairs, ${users.length} users, ${Object.values(records).reduce((s, a) => s + a.length, 0)} records`);
 
 app.post('/api/login', (req, res) => {
-  const { secret_code, name, role } = req.body;
+  const { secret_code, name, role, partner_name } = req.body;
 
   if (!secret_code || secret_code.length < 6) {
     return res.status(400).json({ error: '暗号至少需要6位' });
@@ -53,10 +53,17 @@ app.post('/api/login', (req, res) => {
     pair = {
       id: `pair_${uuidv4()}`,
       secret_code: secret_code,
+      partner_name: partner_name || '',
       created_at: new Date().toISOString()
     };
     pairs.push(pair);
     console.log(`[CREATE PAIR] ${pair.id} for secret_code: ${secret_code}`);
+    saveToFile();
+  }
+
+  // 更新 partner_name（如果提供了）
+  if (partner_name && pair.partner_name !== partner_name) {
+    pair.partner_name = partner_name;
     saveToFile();
   }
 
@@ -78,6 +85,9 @@ app.post('/api/login', (req, res) => {
     saveToFile();
   }
 
+  // 查找伴侣
+  const partner = users.find(u => u.pair_id === pair.id && u.id !== user.id);
+
   const token = `token_${uuidv4()}`;
   
   console.log(`[LOGIN SUCCESS] User: ${user.name}, Pair ID: ${pair.id}, Role: ${role}`);
@@ -87,7 +97,8 @@ app.post('/api/login', (req, res) => {
     user_id: user.id,
     pair_id: pair.id,
     user: user,
-    pair: pair
+    pair: pair,
+    partner_name: partner ? partner.name : (pair.partner_name || '')
   });
 });
 

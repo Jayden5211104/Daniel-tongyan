@@ -6,3 +6,9 @@ dist/
 .DS_Store
 server/data.json
 cloud-functions/data.json
+
+# Tencent Cloud EdgeOne
+.env
+.edgeone/*
+.tef_dist/*
+  
