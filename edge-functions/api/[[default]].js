@@ -1,41 +1,4 @@
-// EdgeOne Edge Functions - 同檐后端 API（KV 持久化存储）
-// KV 变量名 "DATA" 在 EdgeOne 控制台绑定命名空间后自动注入
-
-// 内存降级存储（KV 不可用时使用）
-let memoryStore = null;
-
-function getMemoryStore() {
-  if (!memoryStore) {
-    memoryStore = { pairs: [], users: [], records: [] };
-  }
-  return memoryStore;
-}
-
-// 从 KV 或内存读取数据
-async function getStore() {
-  try {
-    const raw = await DATA.get('store');
-    if (raw) {
-      return typeof raw === 'string' ? JSON.parse(raw) : raw;
-    }
-  } catch (e) {
-    console.error('KV read error:', e);
-  }
-  // 降级到内存
-  return getMemoryStore();
-}
-
-// 保存数据到 KV 或内存
-async function saveStore(store) {
-  try {
-    await DATA.put('store', JSON.stringify(store));
-    return;
-  } catch (e) {
-    console.error('KV write error:', e);
-  }
-  // 降级到内存
-  memoryStore = store;
-}
+// EdgeOne Edge Functions - 同檐后端 API（仅处理登录，数据存前端）
 
 function uuid() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
@@ -95,93 +58,28 @@ export default async function onRequest(context) {
     if (!secret_code || secret_code.length < 6) return jsonError('暗号至少需要 6 位');
     if (!name) return jsonError('请输入名字');
 
-    const store = await getStore();
-
-    let pair = store.pairs.find(p => p.secret_code === secret_code);
-    if (!pair) {
-      pair = { pairId: 'pair_' + uuid(), secret_code, partner_name: partner_name || '', createdAt: new Date().toISOString() };
-      store.pairs.push(pair);
-    }
-    if (partner_name && pair.partner_name !== partner_name) pair.partner_name = partner_name;
-
-    let user = store.users.find(u => u.pairId === pair.pairId && u.name === name);
-    if (!user) {
-      user = { userId: 'user_' + uuid(), pairId: pair.pairId, name, role, createdAt: new Date().toISOString() };
-      store.users.push(user);
-    } else if (user.role !== role) {
-      user.role = role;
-    }
-
-    const partner = store.users.find(u => u.pairId === pair.pairId && u.userId !== user.userId);
-    await saveStore(store);
+    const pairId = 'pair_' + secret_code;
+    const userId = 'user_' + name + '_' + pairId;
 
     return jsonResponse({
       token: 'token_' + uuid(),
-      user_id: user.userId,
-      pair_id: pair.pairId,
-      user: { ...user, id: user.userId },
-      pair: { ...pair, id: pair.pairId },
-      partner_name: partner ? partner.name : (pair.partner_name || '')
+      user_id: userId,
+      pair_id: pairId,
+      user: { id: userId, pairId, name, role },
+      pair: { id: pairId, secret_code, partner_name: partner_name || '' },
+      partner_name: partner_name || ''
     });
   }
 
-  // GET /partner/:pairId/:userId
+  // GET /partner/:pairId/:userId - 获取伴侣名字
   const partnerMatch = pathname.match(/^\/partner\/([^\/]+)\/([^\/]+)$/);
   if (partnerMatch && method === 'GET') {
-    const [, pairId, userId] = partnerMatch;
-    const store = await getStore();
-    const partner = store.users.find(u => u.pairId === pairId && u.userId !== userId);
-    return jsonResponse({ name: partner ? partner.name : '' });
+    return jsonResponse({ name: '' });
   }
 
-  // GET /data/:pairId/:type
-  const getMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)$/);
-  if (getMatch && method === 'GET') {
-    const [, pairId, type] = getMatch;
-    const store = await getStore();
-    const records = store.records.filter(r => r.pairId === pairId && r.type === type).map(r => ({ ...r, pair_id: r.pairId }));
-    return jsonResponse(records);
-  }
-
-  // POST /data/:pairId/:type
-  const postMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)$/);
-  if (postMatch && method === 'POST') {
-    const [, pairId, type] = postMatch;
-    const body = await parseBody(request);
-    if (!body) return jsonError('无效的请求体');
-    const store = await getStore();
-    const normalizedBody = { ...body };
-    if (normalizedBody.pair_id && !normalizedBody.pairId) normalizedBody.pairId = normalizedBody.pair_id;
-    const newRecord = { id: 'item_' + uuid(), pairId, type, ...normalizedBody, createdAt: new Date().toISOString() };
-    store.records.push(newRecord);
-    await saveStore(store);
-    return jsonResponse({ ...newRecord, pair_id: newRecord.pairId }, 201);
-  }
-
-  // PUT /data/:pairId/:type/:id
-  const putMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
-  if (putMatch && method === 'PUT') {
-    const [, pairId, type, id] = putMatch;
-    const body = await parseBody(request);
-    if (!body) return jsonError('无效的请求体');
-    const store = await getStore();
-    const existing = store.records.find(r => r.id === id && r.pairId === pairId && r.type === type);
-    if (!existing) return jsonError('记录不存在', 404);
-    Object.assign(existing, body, { updatedAt: new Date().toISOString() });
-    await saveStore(store);
-    return jsonResponse({ ...existing, pair_id: existing.pairId });
-  }
-
-  // DELETE /data/:pairId/:type/:id
-  const deleteMatch = pathname.match(/^\/data\/([^\/]+)\/([^\/]+)\/([^\/]+)$/);
-  if (deleteMatch && method === 'DELETE') {
-    const [, pairId, type, id] = deleteMatch;
-    const store = await getStore();
-    const index = store.records.findIndex(r => r.id === id && r.pairId === pairId && r.type === type);
-    if (index === -1) return jsonError('记录不存在', 404);
-    store.records.splice(index, 1);
-    await saveStore(store);
-    return jsonResponse({ success: true });
+  // 所有其他 API 返回空数据（数据由前端 localStorage 管理）
+  if (pathname.startsWith('/data/')) {
+    return jsonResponse([]);
   }
 
   return jsonError('Not Found', 404);
